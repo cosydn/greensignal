@@ -1,0 +1,10 @@
+[
+  {"capability":"code","source":"Python CLI pipeline (main.py, comparator.py, extractors.py, retriever.py, models.py)","outcome":"Rebuilt as web app with server functions","status":"verified","next_action":"none"},
+  {"capability":"schema","source":"none (no database)","outcome":"not applicable","status":"verified","next_action":"none"},
+  {"capability":"records","source":"none","outcome":"not applicable","status":"verified","next_action":"none"},
+  {"capability":"auth","source":"none","outcome":"not applicable","status":"verified","next_action":"none"},
+  {"capability":"ai_extraction","source":"Gemini gemini-2.5-flash via GEMINI_API_KEY","outcome":"Same model via Lovable AI Gateway, no user key needed","status":"verified","next_action":"none"},
+  {"capability":"ecfr_lookup","source":"eCFR public search API, Title 40","outcome":"Preserved, server-side fetch","status":"verified","next_action":"none"},
+  {"capability":"secrets","source":"GEMINI_API_KEY","outcome":"Replaced by gateway; not required","status":"verified","next_action":"none"},
+  {"capability":"verification","source":"","outcome":"build, unit tests, end-to-end run","status":"verified","next_action":"none"}
+]
