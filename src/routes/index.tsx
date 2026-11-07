@@ -1,28 +1,23 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { evaluateCompliance } from "@/lib/compliance.functions";
-import type { AuditReport, UnifiedContext } from "@/lib/comparator";
+import { parseEvidence, searchEcfr, type EcfrRef } from "@/lib/evidence.functions";
+import { readEvidenceFile } from "@/lib/read-file";
+import { assess, deriveRequirements, type Assessment } from "@/lib/engine";
+import { emptyEvidence, mergeFragment, SECTION_LABEL, type Evidence, type Fragment, type Section } from "@/lib/evidence-schema";
+import { ReviewCard } from "@/components/evidence/ReviewCard";
+import { RequirementsPanel, type ManualEntry } from "@/components/evidence/RequirementsPanel";
+import { Report } from "@/components/evidence/Report";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "EPA Compliance Evaluation Engine" },
-      {
-        name: "description",
-        content:
-          "Evaluate proposed machinery changes against site permits and 40 CFR baselines with an auditable ALLOW / HOLD / ESCALATE / BLOCK decision.",
-      },
+      { name: "description", content: "Upload evidence in any format, confirm what was extracted, and get an auditable ALLOW / HOLD / ESCALATE / BLOCK assessment against your permit and 40 CFR." },
       { property: "og:title", content: "EPA Compliance Evaluation Engine" },
-      {
-        property: "og:description",
-        content: "Explainable, auditable compliance decisions against permits and Title 40 eCFR.",
-      },
+      { property: "og:description", content: "Evidence-driven, user-confirmed compliance screening against permits and Title 40 eCFR." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -30,140 +25,256 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const decisionStyle: Record<AuditReport["decision"], string> = {
-  ALLOW: "bg-allow text-primary-foreground",
-  HOLD: "bg-hold text-primary-foreground",
-  ESCALATE: "bg-escalate text-foreground",
-  BLOCK: "bg-block text-primary-foreground",
-};
+type Item = { id: string; filename: string; status: "parsing" | "review" | "confirmed" | "rejected" | "error"; fragment?: Fragment; error?: string };
+const TRACKED: Section[] = ["facility", "permit", "equipment_emissions", "operating_records", "proposed_equipment", "environmental", "costs", "approvals"];
+
+function applyManual(ev: Evidence, e: ManualEntry): Evidence {
+  const n = structuredClone(ev);
+  const source = "User entry";
+  const eq = (id: string) => {
+    let x = n.equipment.find((q) => q.id === id);
+    if (!x) {
+      x = { id, status: "existing", controls_enabled: "unknown", source };
+      n.equipment.push(x);
+    }
+    return x;
+  };
+  if (e.type === "factor") n.emission_factors.push({ unit_id: e.unit_id, pollutant: e.pollutant, value: e.value, uom: e.uom, basis: "user_entry", covers_all_modes: false, source });
+  if (e.type === "rating") eq(e.unit_id)[e.field] = e.value;
+  if (e.type === "fuel") eq(e.unit_id).fuel = e.value;
+  if (e.type === "controls") eq(e.unit_id).controls_enabled = e.value;
+  if (e.type === "approval") n.approvals.push({ item: e.item, status: e.value, source });
+  if (e.type === "factor_date") {
+    const f = n.emission_factors.find((x) => x.unit_id === e.unit_id && x.pollutant.toUpperCase() === e.pollutant.toUpperCase());
+    if (f) f.date = e.value;
+  }
+  return n;
+}
 
 function Index() {
-  const run = useServerFn(evaluateCompliance);
-  const [operationalText, setOp] = useState(
-    "Monthly Environmental Log: Boiler #2 recorded NOx emissions running at 18.5 lbs per hour for November.",
-  );
-  const [permitText, setPermit] = useState(
-    "Operating Permit PA-990 Section 3.2: Stationary gas combustion units shall not exceed a maximum NOx emission limit of 15.0 lbs per hour.",
-  );
-  const [ecfrQuery, setQuery] = useState("stationary gas turbine NOx emission limits");
-  const [flags, setFlags] = useState({
-    hasRequiredEvidence: true,
-    calibrationValid: true,
-    operatingHoursProvided: true,
-    requiresPermitModification: false,
-  });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ context: UnifiedContext; report: AuditReport } | null>(
-    null,
-  );
+  const parse = useServerFn(parseEvidence);
+  const ecfr = useServerFn(searchEcfr);
+  const [items, setItems] = useState<Item[]>([]);
+  const [evidence, setEvidence] = useState<Evidence>(() => ({ ...emptyEvidence(), assessment_id: `ASMT-${Date.now().toString(36).toUpperCase()}` }));
+  const [manual, setManual] = useState<ManualEntry[]>([]);
+  const [assessmentDate, setAssessmentDate] = useState("");
+  const [result, setResult] = useState<{ a: Assessment; refs: EcfrRef[] } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const submit = async () => {
-    setLoading(true);
-    setError(null);
+  const finalEvidence = useMemo(() => manual.reduce(applyManual, evidence), [evidence, manual]);
+  const reqs = useMemo(() => deriveRequirements(finalEvidence), [finalEvidence]);
+  const effectiveDate = assessmentDate || finalEvidence.facility.assessment_date || new Date().toISOString().slice(0, 10);
+
+  const patch = (id: string, p: Partial<Item>) => setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+  const addFiles = async (files: FileList | File[]) => {
+    const list = [...files];
+    const queued = list.map((f) => ({ id: crypto.randomUUID(), filename: f.name, status: "parsing" as const }));
+    setItems((xs) => [...xs, ...queued]);
+    setResult(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < list.length) {
+        const i = next++;
+        try {
+          const payload = await readEvidenceFile(list[i]);
+          const r = await parse({ data: payload });
+          if (r.ok) patch(queued[i].id, { status: "review", fragment: r.fragment });
+          else patch(queued[i].id, { status: "error", error: r.error });
+        } catch (e) {
+          patch(queued[i].id, { status: "error", error: e instanceof Error ? e.message : "Upload failed" });
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  };
+
+  const confirm = (id: string, f: Fragment) => {
+    setEvidence((ev) => mergeFragment(ev, f));
+    patch(id, { status: "confirmed", fragment: f });
+    setResult(null);
+  };
+
+  const sectionStatus = (s: Section) => {
+    const its = items.filter((i) => i.fragment?.doc.section === s);
+    if (its.some((i) => i.status === "confirmed")) return "Confirmed";
+    if (its.some((i) => i.status === "review")) return "Needs review";
+    return "Missing";
+  };
+
+  const run = async () => {
+    setRunning(true);
     try {
-      const r = await run({ data: { operationalText, permitText, ecfrQuery, ...flags } });
-      if (r.ok) setResult({ context: r.context, report: r.report });
-      else setError(r.error);
-    } catch {
-      setError("Something went wrong. Please try again.");
+      const kw = finalEvidence.regulatory_keywords.slice(0, 4);
+      const refs = kw.length ? await ecfr({ data: { keywords: kw } }) : [];
+      setResult({ a: assess(finalEvidence, effectiveDate), refs });
     } finally {
-      setLoading(false);
+      setRunning(false);
     }
   };
 
-  const flagLabels: [keyof typeof flags, string][] = [
-    ["hasRequiredEvidence", "Required evidence attached"],
-    ["calibrationValid", "Equipment calibration valid"],
-    ["operatingHoursProvided", "Operating hours provided"],
-    ["requiresPermitModification", "Requires permit modification"],
-  ];
+  const download = () => {
+    const blob = new Blob([JSON.stringify({ ...finalEvidence, assessment_date: effectiveDate }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${finalEvidence.assessment_id}-evidence.json`;
+    a.click();
+  };
+
+  const pending = items.filter((i) => i.status === "review");
+  const parsing = items.filter((i) => i.status === "parsing").length;
+  const confirmedCount = items.filter((i) => i.status === "confirmed").length;
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-12">
-      <header className="mb-10 border-b border-border pb-6">
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-          Title 40 · Protection of Environment
+    <main className="mx-auto max-w-7xl px-6 py-10">
+      <header className="mb-8 border-b border-border pb-6">
+        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Title 40 · Protection of Environment · {finalEvidence.assessment_id}</p>
+        <h1 className="mt-2 font-serif text-4xl font-bold text-primary md:text-5xl">Compliance Evaluation Engine</h1>
+        <p className="mt-3 max-w-3xl text-muted-foreground">
+          Upload evidence in any format. AI extracts the facts, <b className="text-foreground">you confirm them</b>, the permit decides which inputs are required, and a fixed rule engine makes the call.
         </p>
-        <h1 className="mt-2 font-serif text-4xl font-bold text-primary md:text-5xl">
-          Compliance Evaluation Engine
-        </h1>
-        <p className="mt-3 max-w-2xl text-muted-foreground">
-          AI extracts the facts. A deterministic rule engine makes the call — every decision is
-          traceable to a permit clause and federal baseline.
-        </p>
+        <ol className="mt-5 flex flex-wrap gap-2 font-mono text-xs">
+          {[
+            ["1", "Upload", items.length > 0],
+            ["2", "Confirm extracted evidence", confirmedCount > 0 && pending.length === 0],
+            ["3", "Fill required inputs", reqs.length > 0 && reqs.every((r) => r.satisfied)],
+            ["4", "Assessment", !!result],
+          ].map(([n, l, done]) => (
+            <li key={n as string} className={`rounded px-3 py-1 ${done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+              {n} · {l}
+            </li>
+          ))}
+        </ol>
       </header>
 
-      <div className="grid gap-10 lg:grid-cols-2">
-        <section className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="op">1 · Operational log / proposed change</Label>
-            <Textarea id="op" rows={4} value={operationalText} onChange={(e) => setOp(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="permit">2 · Facility permit text</Label>
-            <Textarea id="permit" rows={4} value={permitText} onChange={(e) => setPermit(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="q">3 · eCFR search keywords</Label>
-            <Input id="q" value={ecfrQuery} onChange={(e) => setQuery(e.target.value)} />
-          </div>
-          <fieldset className="grid grid-cols-1 gap-3 rounded border border-border bg-card p-4 sm:grid-cols-2">
-            <legend className="px-1 font-mono text-xs uppercase text-muted-foreground">Evidence checks</legend>
-            {flagLabels.map(([k, label]) => (
-              <div key={k} className="flex items-center gap-2">
-                <Checkbox
-                  id={k}
-                  checked={flags[k]}
-                  onCheckedChange={(v) => setFlags((f) => ({ ...f, [k]: v === true }))}
-                />
-                <Label htmlFor={k} className="font-normal">{label}</Label>
-              </div>
-            ))}
-          </fieldset>
-          <Button size="lg" onClick={submit} disabled={loading} className="w-full">
-            {loading ? "Evaluating…" : "Run compliance evaluation"}
-          </Button>
-          {error && <p className="text-sm text-destructive">{error}</p>}
-        </section>
+      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
+        <div className="space-y-8">
+          <section>
+            <h2 className="mb-3 font-serif text-2xl font-bold">1 · Upload evidence</h2>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDrag(true);
+              }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDrag(false);
+                if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+              }}
+              className={`flex flex-col items-center justify-center gap-3 rounded border-2 border-dashed p-10 text-center transition-colors ${drag ? "border-primary bg-accent" : "border-border bg-card"}`}
+            >
+              <p className="text-sm">Drop permits, logs, spec sheets, stack tests, photos of records…</p>
+              <p className="font-mono text-xs text-muted-foreground">PDF · images · DOCX · TXT · CSV · JSON</p>
+              <Button onClick={() => fileRef.current?.click()}>Choose files</Button>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) addFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+            {items.length > 0 && (
+              <ul className="mt-3 divide-y divide-border rounded border border-border bg-card text-sm">
+                {items.map((i) => (
+                  <li key={i.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="truncate font-mono text-xs">{i.filename}</span>
+                    <span className="flex shrink-0 items-center gap-2 text-xs">
+                      {i.fragment && <span className="text-muted-foreground">{SECTION_LABEL[i.fragment.doc.section]}</span>}
+                      <span
+                        className={`rounded px-2 py-0.5 font-mono uppercase ${
+                          i.status === "confirmed" ? "bg-allow text-primary-foreground" : i.status === "review" ? "bg-escalate text-foreground" : i.status === "error" ? "bg-block text-primary-foreground" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {i.status === "parsing" ? "parsing…" : i.status === "review" ? "needs review" : i.status}
+                      </span>
+                    </span>
+                    {i.error && <span className="text-xs text-destructive">{i.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-        <section>
-          {!result ? (
-            <div className="flex h-full min-h-64 items-center justify-center rounded border border-dashed border-border p-8 text-center text-muted-foreground">
-              The audit report will appear here.
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div className="rounded border border-border bg-card p-6">
-                <span
-                  className={`inline-block rounded px-3 py-1 font-mono text-sm font-medium tracking-widest ${decisionStyle[result.report.decision]}`}
-                >
-                  {result.report.decision}
-                </span>
-                <h2 className="mt-4 font-serif text-2xl font-bold">{result.report.parameter}</h2>
-                <p className="mt-2">{result.report.rationale}</p>
-                <ul className="mt-4 space-y-1 font-mono text-xs text-muted-foreground">
-                  {result.report.citations.map((c) => (
-                    <li key={c}>§ {c}</li>
-                  ))}
-                </ul>
-                {result.context.regulatory_baseline.snippet && (
-                  <p className="mt-4 border-l-2 border-accent pl-3 text-sm italic text-muted-foreground">
-                    {result.context.regulatory_baseline.snippet}
-                  </p>
-                )}
+          <section>
+            <h2 className="mb-3 font-serif text-2xl font-bold">2 · Confirm extracted evidence</h2>
+            {pending.length === 0 ? (
+              <p className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground">
+                {parsing ? `Parsing ${parsing} file(s)…` : "Nothing waiting for review. Nothing is added to the evidence until you confirm it."}
+              </p>
+            ) : (
+              <div className="space-y-5">
+                {pending.map((i) => (
+                  <ReviewCard key={i.id} fragment={i.fragment!} filename={i.filename} onConfirm={(f) => confirm(i.id, f)} onDiscard={() => patch(i.id, { status: "rejected" })} />
+                ))}
               </div>
-              <details className="rounded border border-border bg-card p-4">
-                <summary className="cursor-pointer font-mono text-xs uppercase text-muted-foreground">
-                  Unified context (audit trail)
-                </summary>
-                <pre className="mt-3 overflow-x-auto font-mono text-xs">
-                  {JSON.stringify(result.context, null, 2)}
-                </pre>
-              </details>
+            )}
+          </section>
+
+          <section>
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <h2 className="font-serif text-2xl font-bold">4 · Assessment</h2>
+              <div className="flex items-end gap-2">
+                <label className="text-xs">
+                  <span className="text-muted-foreground">Assessment date</span>
+                  <Input type="date" className="h-9" value={effectiveDate} onChange={(e) => setAssessmentDate(e.target.value)} />
+                </label>
+                <Button size="lg" onClick={run} disabled={running || confirmedCount === 0 || pending.length > 0}>
+                  {running ? "Assessing…" : "Run assessment"}
+                </Button>
+              </div>
             </div>
-          )}
-        </section>
+            {pending.length > 0 && <p className="mb-2 text-xs text-muted-foreground">Confirm or reject every document before running.</p>}
+            {result ? <Report a={result.a} refs={result.refs} facility={finalEvidence.facility} /> : <p className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground">The audit report will appear here.</p>}
+          </section>
+        </div>
+
+        <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
+          <section className="rounded border border-border bg-card p-4">
+            <h3 className="mb-2 text-sm font-semibold">Evidence sections</h3>
+            <ul className="space-y-1 text-xs">
+              {TRACKED.map((s) => {
+                const st = sectionStatus(s);
+                return (
+                  <li key={s} className="flex justify-between gap-2">
+                    <span>{SECTION_LABEL[s]}</span>
+                    <span className={st === "Confirmed" ? "text-allow" : st === "Needs review" ? "text-escalate" : "text-muted-foreground"}>{st}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="mb-3 font-serif text-xl font-bold">3 · Required inputs</h2>
+            <RequirementsPanel
+              reqs={reqs}
+              onAdd={(e) => {
+                setManual((m) => [...m, e]);
+                setResult(null);
+              }}
+            />
+          </section>
+
+          <section className="rounded border border-border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Evidence JSON</h3>
+              <Button size="sm" variant="outline" onClick={download} disabled={confirmedCount === 0 && manual.length === 0}>
+                Download
+              </Button>
+            </div>
+            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+              {finalEvidence.documents.length} docs · {finalEvidence.conditions.length} conditions · {finalEvidence.heat_input.length} records · {manual.length} user entries
+            </p>
+            <pre className="mt-2 max-h-72 overflow-auto rounded bg-muted p-2 font-mono text-[10px]">{JSON.stringify(finalEvidence, null, 2)}</pre>
+          </section>
+        </aside>
       </div>
     </main>
   );
