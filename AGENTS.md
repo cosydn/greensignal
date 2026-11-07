@@ -28,3 +28,7 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+- Compliance decisions come only from the deterministic engine in `src/lib/comparator.ts`; AI is used solely to extract structured facts. Why: decisions must stay auditable and reproducible.
+- AI extraction and eCFR lookups run inside server functions in `src/lib/compliance.functions.ts`. Why: keeps prompts and gateway credentials off the browser.
