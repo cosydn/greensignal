@@ -31,6 +31,7 @@ async function searchEcfrBaseline(query: string) {
   url.searchParams.set("per_page", "1");
   try {
     const res = await fetch(url, { headers: { accept: "application/json" } });
+    if (!res.ok) console.error("eCFR status", res.status, await res.clone().text());
     if (res.ok) {
       const json = (await res.json()) as { results?: any[] };
       const top = json.results?.[0];
@@ -49,8 +50,8 @@ async function searchEcfrBaseline(query: string) {
         return { citation: `40 CFR ${section}`, heading, snippet };
       }
     }
-  } catch {
-    // fall through to default baseline
+  } catch (e) {
+    console.error("eCFR lookup failed", e);
   }
   return { citation: "40 CFR Baseline", heading: null, snippet: "No specific section matched." };
 }
