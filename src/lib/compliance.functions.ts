@@ -27,19 +27,26 @@ async function extract(text: string, schema: string) {
 async function searchEcfrBaseline(query: string) {
   const url = new URL("https://www.ecfr.gov/api/search/v1/results.json");
   url.searchParams.set("query", query);
-  url.searchParams.set("filter[titles]", "40");
+  url.searchParams.set("hierarchy[title]", "40");
+  url.searchParams.set("per_page", "1");
   try {
     const res = await fetch(url, { headers: { accept: "application/json" } });
     if (res.ok) {
       const json = (await res.json()) as { results?: any[] };
       const top = json.results?.[0];
       if (top) {
-        const section = top.hierarchy?.section ?? top.section ?? "Unknown";
-        const heading = top.headings?.section ?? top.heading ?? null;
+        const strip = (v: unknown) => String(v ?? "").replace(/<[^>]+>/g, "").trim();
+        const h = top.hierarchy ?? {};
+        const section = h.section
+          ? `§ ${h.section}`
+          : h.appendix
+            ? strip(top.hierarchy_headings?.appendix ?? h.appendix)
+            : `Part ${h.part ?? "?"}`;
+        const heading = strip(top.headings?.section ?? top.headings?.appendix ?? top.headings?.part) || null;
         const snippet = String(top.full_text_excerpt ?? top.text ?? "")
           .replace(/<[^>]+>/g, "")
           .slice(0, 200);
-        return { citation: `Title 40 CFR Section ${section}`, heading, snippet };
+        return { citation: `40 CFR ${section}`, heading, snippet };
       }
     }
   } catch {
