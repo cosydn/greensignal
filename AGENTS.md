@@ -30,5 +30,5 @@ use the editor.
 <!-- LOVABLE:END -->
 
 ## Project rules
-- Compliance decisions come only from the deterministic engine in `src/lib/comparator.ts`; AI is used solely to extract structured facts. Why: decisions must stay auditable and reproducible.
-- AI extraction and eCFR lookups run inside server functions in `src/lib/compliance.functions.ts`. Why: keeps prompts and gateway credentials off the browser.
+- Compliance decisions come only from the deterministic engine in `src/lib/engine.ts`; AI is used solely to extract structured facts, and extracted facts enter the evidence only after user confirmation. Why: decisions must stay auditable and reproducible.
+- AI extraction and eCFR lookups run inside server functions in `src/lib/evidence.functions.ts`; required inputs are derived from confirmed permit conditions in the engine. Why: keeps prompts and gateway credentials off the browser.
