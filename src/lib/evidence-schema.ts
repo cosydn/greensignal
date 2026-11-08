@@ -158,7 +158,7 @@ export type Sourced<T> = T & { source: string };
 export interface Evidence {
   assessment_id: string;
   documents: Fragment["doc"][];
-  facility: NonNullable<Fragment["facility"]>;
+  facility: Partial<NonNullable<Fragment["facility"]>>;
   conditions: Sourced<Condition>[];
   equipment: Sourced<Equipment>[];
   emission_factors: Sourced<EmissionFactor>[];

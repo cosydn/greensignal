@@ -46,7 +46,7 @@ export const parseEvidence = createServerFn({ method: "POST" })
         ? `Filename: ${data.filename}\n\n<document>\n${data.text}\n</document>`
         : [
             { type: "text", text: `Filename: ${data.filename}. Extract from the attached document.` },
-            { type: "image_url", image_url: { url: data.dataUrl! } },
+            { type: "image_url", image_url: { url: data.dataUrl ?? "" } },
           ];
       const res = await generateChatCompletion({
         model: "google/gemini-2.5-flash",

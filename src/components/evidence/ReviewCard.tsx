@@ -91,7 +91,7 @@ function Field({ col, value, onChange }: { col: Col; value: any; onChange: (v: a
   if (col.type === "select")
     return (
       <select className={`${cell} rounded border border-input bg-card`} value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
-        {col.options!.map((o) => (
+        {(col.options ?? []).map((o) => (
           <option key={o} value={o}>
             {o.replace(/_/g, " ")}
           </option>
@@ -194,7 +194,7 @@ export function ReviewCard({
                 {Object.entries(f.facility).map(([k, v]) => (
                   <label key={k} className="text-xs">
                     <span className="text-muted-foreground">{k.replace(/_/g, " ")}</span>
-                    <Input className={cell} value={v ?? ""} onChange={(e) => setF((p) => ({ ...p, facility: { ...p.facility, [k]: e.target.value } }))} />
+                    <Input className={cell} value={v ?? ""} onChange={(e) => setF((p) => ({ ...p, facility: p.facility ? { ...p.facility, [k]: e.target.value } : undefined }))} />
                   </label>
                 ))}
               </div>
