@@ -7,6 +7,7 @@ import { assess, deriveRequirements, type Assessment } from "@/lib/engine";
 import { emptyEvidence, mergeFragment, SECTION_LABEL, type Evidence, type Fragment, type Section } from "@/lib/evidence-schema";
 import { ReviewCard } from "@/components/evidence/ReviewCard";
 import { RequirementsPanel, type ManualEntry } from "@/components/evidence/RequirementsPanel";
+import { ProposedAction } from "@/components/evidence/ProposedAction";
 import { Report } from "@/components/evidence/Report";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,8 +55,9 @@ function applyManual(ev: Evidence, e: ManualEntry): Evidence {
 function Index() {
   const parse = useServerFn(parseEvidence);
   const ecfr = useServerFn(searchEcfr);
+  const [step, setStep] = useState(0);
   const [items, setItems] = useState<Item[]>([]);
-  const [evidence, setEvidence] = useState<Evidence>(() => ({ ...emptyEvidence(), assessment_id: `ASMT-${Date.now().toString(36).toUpperCase()}` }));
+  const [evidence, setEvidence] = useState<Evidence>(() => ({ ...emptyEvidence(), assessment_id: "ASMT-REVIEW" }));
   const [manual, setManual] = useState<ManualEntry[]>([]);
   const [assessmentDate, setAssessmentDate] = useState("");
   const [result, setResult] = useState<{ a: Assessment; refs: EcfrRef[] } | null>(null);
@@ -79,12 +81,16 @@ function Index() {
       while (next < list.length) {
         const i = next++;
         try {
-          const payload = await readEvidenceFile(list[i]);
+          const file = list[i];
+          if (!file) continue;
+          const queuedItem = queued[i];
+          if (!queuedItem) continue;
+          const payload = await readEvidenceFile(file);
           const r = await parse({ data: payload });
-          if (r.ok) patch(queued[i].id, { status: "review", fragment: r.fragment });
-          else patch(queued[i].id, { status: "error", error: r.error });
+          if (r.ok) patch(queued[i]?.id ?? "", { status: "review", fragment: r.fragment });
+          else patch(queued[i]?.id ?? "", { status: "error", error: r.error });
         } catch (e) {
-          patch(queued[i].id, { status: "error", error: e instanceof Error ? e.message : "Upload failed" });
+          patch(queued[i]?.id ?? "", { status: "error", error: e instanceof Error ? e.message : "Upload failed" });
         }
       }
     };
@@ -131,28 +137,17 @@ function Index() {
     <main className="mx-auto max-w-7xl px-6 py-10">
       <header className="mb-8 border-b border-border pb-6">
         <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Title 40 · Protection of Environment · {finalEvidence.assessment_id}</p>
-        <h1 className="mt-2 font-serif text-4xl font-bold text-primary md:text-5xl">Compliance Evaluation Engine</h1>
-        <p className="mt-3 max-w-3xl text-muted-foreground">
-          Upload evidence in any format. AI extracts the facts, <b className="text-foreground">you confirm them</b>, the permit decides which inputs are required, and a fixed rule engine makes the call.
-        </p>
-        <ol className="mt-5 flex flex-wrap gap-2 font-mono text-xs">
-          {[
-            ["1", "Upload", items.length > 0],
-            ["2", "Confirm extracted evidence", confirmedCount > 0 && pending.length === 0],
-            ["3", "Fill required inputs", reqs.length > 0 && reqs.every((r) => r.satisfied)],
-            ["4", "Assessment", !!result],
-          ].map(([n, l, done]) => (
-            <li key={n as string} className={`rounded px-3 py-1 ${done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-              {n} · {l}
-            </li>
-          ))}
-        </ol>
+        <h1 className="mt-2 font-serif text-4xl font-bold text-primary md:text-5xl">Environmental Regulatory Review</h1>
+        <p className="mt-3 text-muted-foreground">Company evidence review · Permit screening · Proposed-action evaluation</p>
+        <nav aria-label="Review steps" className="mt-6 flex flex-wrap gap-2">
+          {["Company evidence", "Confirm evidence", "Permit requirements", "Proposed action", "Assessment"].map((label, i) => <Button key={label} variant={step === i ? "default" : "outline"} onClick={() => setStep(i)} aria-current={step === i ? "step" : undefined}>{i + 1} · {label}</Button>)}
+        </nav>
       </header>
 
-      <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
+      <div className="space-y-8">
         <div className="space-y-8">
-          <section>
-            <h2 className="mb-3 font-serif text-2xl font-bold">1 · Upload evidence</h2>
+          {step === 0 && <section>
+            <h2 className="mb-3 font-serif text-2xl font-bold">Company evidence</h2>
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -200,10 +195,10 @@ function Index() {
                 ))}
               </ul>
             )}
-          </section>
+          </section>}
 
-          <section>
-            <h2 className="mb-3 font-serif text-2xl font-bold">2 · Confirm extracted evidence</h2>
+          {step === 1 && <section>
+            <h2 className="mb-3 font-serif text-2xl font-bold">Confirm company evidence</h2>
             {pending.length === 0 ? (
               <p className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground">
                 {parsing ? `Parsing ${parsing} file(s)…` : "Nothing waiting for review. Nothing is added to the evidence until you confirm it."}
@@ -211,32 +206,33 @@ function Index() {
             ) : (
               <div className="space-y-5">
                 {pending.map((i) => (
-                  <ReviewCard key={i.id} fragment={i.fragment!} filename={i.filename} onConfirm={(f) => confirm(i.id, f)} onDiscard={() => patch(i.id, { status: "rejected" })} />
+                  <ReviewCard key={i.id} fragment={i.fragment ?? ({} as Fragment)} filename={i.filename} onConfirm={(f) => confirm(i.id, f)} onDiscard={() => patch(i.id, { status: "rejected" })} />
                 ))}
               </div>
             )}
-          </section>
+          </section>}
 
-          <section>
+          {step === 4 && <section>
             <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-              <h2 className="font-serif text-2xl font-bold">4 · Assessment</h2>
+              <h2 className="font-serif text-2xl font-bold">Regulatory assessment</h2>
               <div className="flex items-end gap-2">
                 <label className="text-xs">
                   <span className="text-muted-foreground">Assessment date</span>
                   <Input type="date" className="h-9" value={effectiveDate} onChange={(e) => setAssessmentDate(e.target.value)} />
                 </label>
-                <Button size="lg" onClick={run} disabled={running || confirmedCount === 0 || pending.length > 0}>
+                <Button size="lg" onClick={run} disabled={running || parsing > 0 || confirmedCount === 0 || pending.length > 0}>
                   {running ? "Assessing…" : "Run assessment"}
                 </Button>
               </div>
             </div>
             {pending.length > 0 && <p className="mb-2 text-xs text-muted-foreground">Confirm or reject every document before running.</p>}
             {result ? <Report a={result.a} refs={result.refs} facility={finalEvidence.facility} /> : <p className="rounded border border-dashed border-border p-4 text-sm text-muted-foreground">The audit report will appear here.</p>}
-          </section>
+          </section>}
+          {step === 3 && <ProposedAction evidence={finalEvidence} />}
         </div>
 
-        <aside className="space-y-6 lg:sticky lg:top-6 lg:self-start">
-          <section className="rounded border border-border bg-card p-4">
+        <div className="space-y-6">
+          {step === 0 && <section className="border-t border-border pt-4">
             <h3 className="mb-2 text-sm font-semibold">Evidence sections</h3>
             <ul className="space-y-1 text-xs">
               {TRACKED.map((s) => {
@@ -249,10 +245,10 @@ function Index() {
                 );
               })}
             </ul>
-          </section>
+          </section>}
 
-          <section>
-            <h2 className="mb-3 font-serif text-xl font-bold">3 · Required inputs</h2>
+          {step === 2 && <section>
+            <h2 className="mb-3 font-serif text-2xl font-bold">Permit-derived requirements</h2>
             <RequirementsPanel
               reqs={reqs}
               onAdd={(e) => {
@@ -260,9 +256,9 @@ function Index() {
                 setResult(null);
               }}
             />
-          </section>
+          </section>}
 
-          <section className="rounded border border-border bg-card p-4">
+          {step === 1 && <section className="border-t border-border pt-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold">Evidence JSON</h3>
               <Button size="sm" variant="outline" onClick={download} disabled={confirmedCount === 0 && manual.length === 0}>
@@ -273,9 +269,10 @@ function Index() {
               {finalEvidence.documents.length} docs · {finalEvidence.conditions.length} conditions · {finalEvidence.heat_input.length} records · {manual.length} user entries
             </p>
             <pre className="mt-2 max-h-72 overflow-auto rounded bg-muted p-2 font-mono text-[10px]">{JSON.stringify(finalEvidence, null, 2)}</pre>
-          </section>
-        </aside>
+          </section>}
+        </div>
       </div>
+      <footer className="mt-8 flex justify-between border-t border-border pt-5"><Button variant="outline" disabled={step === 0} onClick={() => setStep(step - 1)}>Previous</Button><Button disabled={step === 4} onClick={() => setStep(step + 1)}>Next step</Button></footer>
     </main>
   );
 }

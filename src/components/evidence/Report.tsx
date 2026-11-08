@@ -16,7 +16,7 @@ const statusStyle: Record<CheckStatus, string> = {
   not_assessed: "bg-muted text-muted-foreground",
 };
 
-export function Report({ a, refs, facility }: { a: Assessment; refs: EcfrRef[]; facility: Record<string, string | undefined> }) {
+export function Report({ a, refs, facility }: { a: Assessment; refs: EcfrRef[]; facility: Partial<import("@/lib/evidence-schema").Evidence["facility"]> }) {
   return (
     <div className="space-y-6">
       <div className="rounded border border-border bg-card p-6">
@@ -47,22 +47,22 @@ export function Report({ a, refs, facility }: { a: Assessment; refs: EcfrRef[]; 
                     <thead className="text-muted-foreground">
                       <tr>
                         <th className="text-left">Month</th>
-                        {Object.keys(f.table[0].byUnit).map((u) => <th key={u} className="text-right">{u} lb</th>)}
+                        {Object.keys((f.table[0]?.byUnit ?? {})).map((u) => <th key={u} className="text-right">{u} lb</th>)}
                         <th className="text-right">Month lb</th>
                         <th className="text-right">Rolling lb</th>
-                        <th className="w-32 pl-3 text-left">vs {fmt(f.limit!)}</th>
+                        <th className="w-32 pl-3 text-left">vs {fmt((f.limit ?? 0))}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {f.table.map((r) => (
                         <tr key={r.month}>
                           <td>{r.month}</td>
-                          {Object.keys(f.table![0].byUnit).map((u) => <td key={u} className="text-right">{fmt(r.byUnit[u] ?? 0)}</td>)}
+                          {Object.keys((f.table?.[0]?.byUnit ?? {})).map((u) => <td key={u} className="text-right">{fmt(r.byUnit[u] ?? 0)}</td>)}
                           <td className="text-right">{fmt(r.monthly_lb)}</td>
                           <td className="text-right font-medium">{fmt(r.rolling_lb)}</td>
                           <td className="pl-3">
                             <div className="h-2 rounded bg-muted">
-                              <div className={`h-2 rounded ${r.rolling_lb > f.limit! ? "bg-block" : r.rolling_lb > f.limit! * 0.9 ? "bg-escalate" : "bg-allow"}`} style={{ width: `${Math.min(100, (r.rolling_lb / f.limit!) * 100)}%` }} />
+                              <div className={`h-2 rounded ${r.rolling_lb > (f.limit ?? 0) ? "bg-block" : r.rolling_lb > (f.limit ?? 0) * 0.9 ? "bg-escalate" : "bg-allow"}`} style={{ width: `${Math.min(100, (r.rolling_lb / (f.limit ?? 0)) * 100)}%` }} />
                             </div>
                           </td>
                         </tr>
@@ -100,23 +100,6 @@ export function Report({ a, refs, facility }: { a: Assessment; refs: EcfrRef[]; 
         </ul>
       </div>
 
-      {(a.sustainability.length > 0 || a.missing.length > 0) && (
-        <div className="rounded border border-border bg-card p-4">
-          <h4 className="font-semibold">Sustainability context & limitations</h4>
-          <p className="text-xs text-muted-foreground">Informational only — does not affect the outcome.</p>
-          <dl className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
-            {a.sustainability.map((s) => (
-              <div key={s.label} className="flex justify-between gap-3 border-b border-border py-1">
-                <dt className="text-muted-foreground">{s.label}</dt>
-                <dd className="text-right font-mono text-xs">{s.value}</dd>
-              </div>
-            ))}
-          </dl>
-          {a.missing.length > 0 && (
-            <ul className="mt-3 list-inside list-disc text-xs text-muted-foreground">{a.missing.map((m) => <li key={m}>Not supplied: {m}</li>)}</ul>
-          )}
-        </div>
-      )}
       <p className="text-xs text-muted-foreground">Screening of defined conditions only — not a legal determination of compliance.</p>
     </div>
   );

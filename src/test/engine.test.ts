@@ -67,12 +67,16 @@ describe("assessment engine", () => {
   });
   it("blocks when the rolling limit is exceeded", () => {
     const ev = demo();
-    ev.conditions[0].limit = 2500;
+    const condition = ev.conditions[0];
+    if (!condition) throw new Error("Missing NOx condition");
+    condition.limit = 2500;
     expect(assess(ev, "2027-01-15").outcome).toBe("BLOCK");
   });
   it("a total exactly equal to the limit passes (inclusive)", () => {
     const ev = demo();
-    ev.conditions[1].limit = 2002;
+    const condition = ev.conditions[1];
+    if (!condition) throw new Error("Missing CO condition");
+    condition.limit = 2002;
     expect(assess(ev, "2027-01-15").findings.find((x) => x.condition_id === "U-AIR-02")!.status).toBe("pass");
   });
   it("holds instead of assuming zero when a factor is missing", () => {
