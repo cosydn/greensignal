@@ -1,26 +1,20 @@
-# Greensignal
+# GreenSignal: EPA Compliance & Machine Change Evaluation Engine
 
-/skill:migrate-external-project Source: code archive. Migrate the attached project into Lovable.
+An explainable, auditable compliance pipeline designed to evaluate proposed operational changes (such as new machinery installations) against site-specific permits and federal EPA baselines (**Title 40 of the eCFR**). 
 
-This project was built with [Lovable](https://lovable.dev).
+The system strictly decouples **unstructured data extraction** (powered by Google Gemini) from **compliance decision-making** (handled by a pure, deterministic Python code engine) to ensure full traceability and auditability.
 
-**Live app**: https://greensignal.lovable.app
+---
 
-## Build with Lovable
+## Project Architecture
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/a957114d-6f8f-49bf-9171-4f53663e2bfa).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
-
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
-```
+```text
+epa_compliance_engine/
+│
+├── .env                  # API keys and secret configurations
+├── requirements.txt      # Project dependencies
+├── models.py             # Pydantic schemas for unified context data
+├── extractors.py         # Gemini LLM-based structured data extraction
+├── retriever.py          # eCFR API client for federal regulatory baselines
+├── comparator.py         # Deterministic rule engine (Allow, Hold, Escalate, Block)
+└── main.py               # Orchestration script tying the pipeline together
