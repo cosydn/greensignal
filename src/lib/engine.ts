@@ -28,7 +28,7 @@ export interface Requirement {
 }
 
 const P = (s?: string) => (s ?? "").toUpperCase().replace(/\s+/g, "");
-const unitsFor = (ev: Evidence, c: Condition) =>
+const unitsFor = (ev: Evidence, c: Pick<Condition, "units">) =>
   c.units.length ? c.units : ev.equipment.map((e) => e.id);
 
 export function findFactor(ev: Evidence, unit: string, pollutant?: string) {
@@ -171,7 +171,7 @@ function matchApproval(ev: Evidence, item: string) {
 
 // ---------------------------------------------------------------- assessment
 
-export function factorToLbPerMMBtu(f: Pick<EmissionFactor, "value" | "uom">): number | undefined {
+export function factorToLbPerMMBtu(f: { value?: number | undefined; uom: EmissionFactor["uom"] }): number | undefined {
   if (f.value == null) return undefined;
   if (f.uom === "g/MMBtu") return f.value / GRAMS_PER_LB;
   if (f.uom === "kg/MMBtu") return f.value / KG_PER_LB;
