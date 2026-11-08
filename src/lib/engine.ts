@@ -225,7 +225,7 @@ export interface Assessment {
   headline: string;
   findings: Finding[];
   actions: string[];
-  projection: { start?: string; end?: string };
+  projection: { start?: string | undefined; end?: string | undefined };
   sustainability: { label: string; value: string }[];
   missing: string[];
 }

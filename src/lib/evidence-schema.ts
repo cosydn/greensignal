@@ -154,7 +154,8 @@ export const FragmentSchema = z.object({
 export type Fragment = z.infer<typeof FragmentSchema>;
 
 /** Merged, user-confirmed evidence. Items carry the document they came from. */
-export type Sourced<T> = T & { source: string };
+export type OptionalUndefined<T> = { [K in keyof T as undefined extends T[K] ? never : K]: T[K] } & { [K in keyof T as undefined extends T[K] ? K : never]?: T[K] };
+export type Sourced<T> = OptionalUndefined<T> & { source: string };
 export interface Evidence {
   assessment_id: string;
   documents: Fragment["doc"][];
